@@ -1,0 +1,439 @@
+pickedUp = false
+clickPlayerColor = ""
+newX = 0
+newZ = 0
+facX = 1
+facZ = 1
+posX = 0
+maxX = 0
+posZ = 0
+maxZ = 0
+hip = 0
+rngMov = 0
+posY = 0
+txtMax = ""
+colorLinea = Color(0.10, 0.10, 0.09)
+state = nil
+baseModel = nil
+mtoi = 0.0393701
+--GUIDModel = ""
+
+-- Small helper: true when a value is NaN (NaN never equals itself)
+local function isNaN(v)
+    return v ~= v
+end
+
+function onPickUp(cp)
+    clickPlayerColor = cp
+    --print(clickPlayerColor)
+    pickedUp = true
+    startLuaCoroutine(self, "movModel")
+end
+
+function movModel()
+    objModel = getObjectFromGUID(GUIDNodPrev)
+    if objModel == nil then
+        print("movModel: GUIDNodPrev did not resolve to an object")
+        return 1
+    end
+
+    posX = objModel.getPosition().x
+    posZ = objModel.getPosition().z
+    posY = objModel.getPosition().y
+    state = objModel.getTable("state")
+
+    -- Nil-guard the state chain. If any link is missing we fall back to a
+    -- sane default so RM downstream never becomes nil/NaN.
+    if state ~= nil and state.base ~= nil and state.base.x ~= nil then
+        baseModel = state.base.x
+    else
+        print("movModel: state.base.x missing, defaulting baseModel to 1")
+        baseModel = 1
+    end
+
+    maxX = posX + rngMov
+    maxZ = posZ + rngMov
+
+    while (pickedUp == true) do
+        posicionLock()
+        coroutine.yield(0)
+    end
+    return 1
+end
+
+
+function posicionLock()
+    mouseX = self.getPosition().x
+    mouseZ = self.getPosition().z
+    newX = mouseX
+    newZ = mouseZ
+    FZ = 1
+    SX = 0
+    SZ = 0
+    --print("X:"..mouseX.."|Z:"..mouseZ)
+
+    if math.sqrt(((mouseX - posX) * (mouseX - posX)) + ((mouseZ - posZ) * (mouseZ - posZ))) > rngMov then
+        --print("dentro")
+
+        -- Guard the slope. When mouseX == posX the line is vertical and the
+        -- slope m blows up to inf/NaN, so handle that case explicitly.
+        if mouseX == posX then
+            -- Straight up/down from the anchor: clamp Z to the circle radius
+            newX = posX
+            if mouseZ < posZ then
+                newZ = posZ - rngMov
+            else
+                newZ = posZ + rngMov
+            end
+        else
+            m = (mouseZ - posZ) / (mouseX - posX)
+            A = (m * mouseX) - mouseZ + posZ
+            T1 = (1 + (m * m))
+            T2 = (-2 * posX) + (-2 * A * m)
+            T3 = (posX * posX) + (A * A) - (rngMov * rngMov)
+
+            local disc = (T2 * T2) - (4 * T1 * T3)
+            if disc < 0 then disc = 0 end
+
+            S1X = ((-1 * T2) + math.sqrt(disc)) / (2 * T1)
+            S2X = ((-1 * T2) - math.sqrt(disc)) / (2 * T1)
+
+            if mouseX > posX then SX = math.max(S1X, S2X) else SX = math.min(S1X, S2X) end
+            if mouseZ < posZ then FZ = -1 else FZ = 1 end
+
+            local zUnder = (rngMov * rngMov) - ((SX - posX) * (SX - posX))
+            if zUnder < 0 then zUnder = 0 end
+            SZ = (math.sqrt(zUnder) * FZ) + posZ
+
+            newX = SX
+            newZ = SZ
+        end
+
+        -- Final NaN safety net before we ever commit a position.
+        if isNaN(newX) or isNaN(newZ) then
+            newX = self.getPosition().x
+            newZ = self.getPosition().z
+        else
+            self.setPosition({ x = newX, y = self.getPosition().y, z = newZ })
+            self.setVelocity({ 0, 0, 0 })
+            self.setAngularVelocity({ 0, 0, 0 })
+        end
+    else
+        --print("fuera")
+    end
+
+    self.setRotation({ 0, 0, 0 })
+    refrescaVectores()
+    refrescaTextoRango()
+end
+
+function onDropped(cp)
+    if pickedUp == true then
+        pickedUp = false
+
+        -- Don't drop the object onto a NaN position.
+        if isNaN(newX) or isNaN(newZ) then
+            newX = self.getPosition().x
+            newZ = self.getPosition().z
+        end
+
+        self.setPosition({ x = newX, y = self.getPosition().y, z = newZ })
+        self.setVelocity({ 0, 0, 0 })
+        self.setAngularVelocity({ 0, 0, 0 })
+        self.setRotation({ 0, 0, 0 })
+        --self.setDescription("X:"..newX.."|Z:"..newZ)
+        refrescaVectores()
+    end
+end
+
+function refrescaVectores()
+    result = {}
+    newLines = {}
+    ancho_linea = 0.2
+
+    -- Guard against a nil baseModel sneaking through.
+    if baseModel == nil then baseModel = 1 end
+
+    RM = (baseModel * mtoi * 0.5) - (ancho_linea * 0.5)
+
+    mX = 0
+    mZ = 0
+    pX = posX - self.getPosition().x
+    pZ = posZ - self.getPosition().z
+
+    local dx = mX - pX   -- equals -pX
+    local dz = mZ - pZ   -- equals -pZ
+
+    -- Decide the orientation of the perpendicular (M2) safely.
+    --   dx == 0  -> connecting line is vertical    -> perpendicular horizontal -> M2 = 0
+    --   dz == 0  -> connecting line is horizontal   -> perpendicular vertical   -> special-case it
+    --   else     -> normal slope
+    local verticalPerp = false
+    local M2 = 0
+
+    if dx == 0 then
+        M2 = 0
+    elseif dz == 0 then
+        verticalPerp = true
+    else
+        M = dz / dx
+        M2 = -1 / M
+    end
+
+    if verticalPerp then
+        -- Perpendicular is a vertical line: anchor/destination points just
+        -- offset in Z by RM. No quadratic needed.
+        local XA1 = pX
+        local XA2 = pX
+        local ZA1 = pZ + RM
+        local ZA2 = pZ - RM
+
+        local XB1 = mX
+        local XB2 = mX
+        local ZB1 = mZ + RM
+        local ZB2 = mZ - RM
+
+        table.insert(result, { x = XA1, z = math.min(ZA1, ZA2), y = 0.1 })
+        table.insert(result, { x = XB1, z = math.min(ZB1, ZB2), y = 0.1 })
+        table.insert(result, { x = XB2, z = math.max(ZB1, ZB2), y = 0.1 })
+        table.insert(result, { x = XA2, z = math.max(ZA1, ZA2), y = 0.1 })
+    else
+        -- puntos ancla
+        TA1 = 1 + (M2 * M2)
+        TA2 = -1 * ((2 * (M2 * M2) * pX) + (2 * pX))
+        TA3 = ((M2 * M2) * (pX * pX)) + (pX * pX) - (RM * RM)
+
+        local discA = (TA2 * TA2) - (4 * TA1 * TA3)
+        if discA < 0 then discA = 0 end
+
+        XA1 = (((-1) * (TA2)) + math.sqrt(discA)) / (2 * TA1)
+        XA2 = (((-1) * (TA2)) - math.sqrt(discA)) / (2 * TA1)
+        if XA1 < pX then F1 = -1 else F1 = 1 end
+        if XA2 < pX then F2 = -1 else F2 = 1 end
+
+        local zaUnder1 = (RM * RM) - (((XA1 - pX) * (XA1 - pX)))
+        local zaUnder2 = (RM * RM) - (((XA2 - pX) * (XA2 - pX)))
+        if zaUnder1 < 0 then zaUnder1 = 0 end
+        if zaUnder2 < 0 then zaUnder2 = 0 end
+        ZA1 = (math.sqrt(zaUnder1) * F1) + pZ
+        ZA2 = (math.sqrt(zaUnder2) * F2) + pZ
+
+        -- puntos destino
+        TB1 = 1 + (M2 * M2)
+        TB2 = -1 * ((2 * (M2 * M2) * mX) + (2 * mX))
+        TB3 = ((M2 * M2) * (mX * mX)) + (mX * mX) - (RM * RM)
+
+        local discB = (TB2 * TB2) - (4 * TB1 * TB3)
+        if discB < 0 then discB = 0 end
+
+        XB1 = (((-1) * (TB2)) + math.sqrt(discB)) / (2 * TB1)
+        XB2 = (((-1) * (TB2)) - math.sqrt(discB)) / (2 * TB1)
+        if XB1 < mX then F1 = -1 else F1 = 1 end
+        if XB2 < mX then F2 = -1 else F2 = 1 end
+
+        local zbUnder1 = (RM * RM) - (((XB1 - mX) * (XB1 - mX)))
+        local zbUnder2 = (RM * RM) - (((XB2 - mX) * (XB2 - mX)))
+        if zbUnder1 < 0 then zbUnder1 = 0 end
+        if zbUnder2 < 0 then zbUnder2 = 0 end
+        ZB1 = (math.sqrt(zbUnder1) * F1) + mZ
+        ZB2 = (math.sqrt(zbUnder2) * F2) + mZ
+
+        if M2 >= 0 then
+            sX = math.min(XA1, XA2)
+            sZ = math.min(ZA1, ZA2)
+            table.insert(result, { x = sX, z = sZ, y = 0.1 })
+            sX = math.min(XB1, XB2)
+            sZ = math.min(ZB1, ZB2)
+            table.insert(result, { x = sX, z = sZ, y = 0.1 })
+            sX = math.max(XB1, XB2)
+            sZ = math.max(ZB1, ZB2)
+            table.insert(result, { x = sX, z = sZ, y = 0.1 })
+            sX = math.max(XA1, XA2)
+            sZ = math.max(ZA1, ZA2)
+            table.insert(result, { x = sX, z = sZ, y = 0.1 })
+        else
+            sX = math.max(XA1, XA2)
+            sZ = math.min(ZA1, ZA2)
+            table.insert(result, { x = sX, z = sZ, y = 0.1 })
+            sX = math.max(XB1, XB2)
+            sZ = math.min(ZB1, ZB2)
+            table.insert(result, { x = sX, z = sZ, y = 0.1 })
+            sX = math.min(XB1, XB2)
+            sZ = math.max(ZB1, ZB2)
+            table.insert(result, { x = sX, z = sZ, y = 0.1 })
+            sX = math.min(XA1, XA2)
+            sZ = math.max(ZA1, ZA2)
+            table.insert(result, { x = sX, z = sZ, y = 0.1 })
+        end
+    end
+
+    -- Don't hand NaN points to setVectorLines.
+    for _, p in ipairs(result) do
+        if isNaN(p.x) or isNaN(p.z) then
+            -- A NaN slipped through; bail on drawing this frame.
+            return
+        end
+    end
+
+    table.insert(newLines, {
+        points = result,
+        color = colorLinea,
+        thickness = ancho_linea,
+        rotation = ({ 0, 0, 0 })
+    })
+    self.setVectorLines(newLines)
+end
+
+function onNumberTyped(pc, n)
+    if n > 0 and n <= 1 then
+        rngMov = n
+        txtMax = "\n(max " .. n .. "'')"
+        colorLinea = Color(0.10, 0.10, 0.09)
+        posicionLock()
+    elseif n > 0 and n <= 2 then
+        rngMov = n
+        txtMax = "\n(max " .. n .. "'')"
+        colorLinea = Color(1, 1, 1)
+        posicionLock()
+    elseif n > 0 and n <= 3 then
+        rngMov = n
+        txtMax = "\n(max " .. n .. "'')"
+        colorLinea = Color(0, 0.36, 0.62)
+        posicionLock()
+    elseif n > 0 and n <= 6 then
+        rngMov = n
+        txtMax = "\n(max " .. n .. "'')"
+        colorLinea = Color(0.80, 0.08, 0.09)
+        posicionLock()
+    elseif n == 7 then
+        rngMov = n
+        txtMax = "\n(max " .. n .. "'')"
+        colorLinea = Color(0.80, 0.08, 0.09)
+        posicionLock()
+    elseif n == 8 then
+        retira_Ruta()
+    elseif n == 9 then
+        agregaRuta()
+    else
+        objModel = getObjectFromGUID(GUIDModel)
+        --print(objModel)
+        if objModel ~= nil then
+            objModel.setPosition({ x = self.getPosition().x, y = self.getPosition().y, z = self.getPosition().z }, false)
+            objModel.setVelocity({ 0, 0, 0 })
+            objModel.setAngularVelocity({ 0, 0, 0 })
+        end
+        retira_Ruta_Chain()
+    end
+end
+
+function onLoad(ls)
+    self.setName(
+        "Hover over and press these buttons:\n" ..
+        "- 1-7 to change the distance\n" ..
+        "- 8 to cancel last step\n" ..
+        "- 9 to confirm step\n" ..
+        "- 0 to finish and move the model"
+    )
+    self.max_typed_number = 9
+    rngMov = 1
+    txtMax = "\n(max 1'')"
+    self.clearButtons()
+    local rango = { ['function_owner'] = self, ['click_function'] = 'gg', ['label'] = "1''" .. txtMax, ['position'] = { 0, 0.25, 0 }, ['rotation'] = { 0, 0, 0 }, ['width'] = 5, ['height'] = 5, ['font_size'] = 150, ['font_color'] = { 1, 1, 1 } }
+    self.createButton(rango)
+    pickedUp = true
+    startLuaCoroutine(self, "movModel")
+    pickedUp = false
+end
+
+function refrescaTextoRango()
+    cat1 = posX - self.getPosition().x
+    cat2 = posZ - self.getPosition().z
+    hip = math.sqrt((cat1 * cat1) + (cat2 * cat2))
+    if hip - math.floor(hip) > 0.005 then
+        hip = math.floor(hip) + 1
+    else
+        hip = math.floor(hip)
+    end
+    self.editButton({ index = 0, label = hip .. "''" .. txtMax })
+end
+
+function agregaRuta()
+    CUBO = nil
+    DataObjeto =
+    {
+        type = "Custom_Model",
+        scale = { 1, 1, 1 },
+        rotation = { 0, 0, 0 },
+        position = { 85, 2, 100 }
+    }
+    DataModel =
+    {
+        mesh = "https://steamusercontent-a.akamaihd.net/ugc/17056262814538613288/098746CE20F738905CA068C277D85FE6F93F550D/",
+        diffuse = "https://raw.githubusercontent.com/xSpaghettyx/KT24-Table-The-Killzone-Mod/refs/heads/main/KTMT%20Diffuse.png",
+        collider = "https://raw.githubusercontent.com/Ixidior/KTMT/main/collider4.obj",
+        type = 0,
+        material = 0,
+        specular_intensity = 0,
+        specular_sharpness = 7,
+        freshnel_strength = 0.4
+    }
+    -- Capture this node's own GUID and script BEFORE the spawn callback,
+    -- so the values are stable inside the closure.
+    local prevGUID = self.getGUID()
+    local selfScript = self.getLuaScript()
+
+    if CUBO == nil then
+        CUBO = spawnObject(DataObjeto)
+        --print(CUBO.getGUID())
+        CUBO.setCustomObject(DataModel)
+        CUBO.angular_drag = 0.1
+        CUBO.bounciness = 0
+        CUBO.dynamic_friction = 0.7
+        CUBO.drag = 0.1
+        CUBO.mass = 1
+        CUBO.static_friction = 1
+    end
+
+    -- No web dependency: hand the freshly spawned node a copy of this very
+    -- script, plus the chain GUIDs. We wait for the object to finish spawning
+    -- before assigning, since the model/collider load asynchronously.
+    Wait.condition(
+        function()
+            CUBO.setLuaScript(selfScript)
+            CUBO.setVar("GUIDModel", GUIDModel)
+            CUBO.setVar("GUIDNodPrev", prevGUID)
+        end,
+        function()
+            return CUBO ~= nil and CUBO.loading_custom == false
+        end
+    )
+
+    self.setLock(true)
+    self.interactable = false
+end
+
+function retira_Ruta()
+    obj = getObjectFromGUID(GUIDNodPrev)
+    if obj ~= nil then
+        obj.interactable = true
+        obj.setLock(false)
+    end
+    self.destruct()
+end
+
+function retira_Ruta_Chain()
+    if GUIDModel ~= GUIDNodPrev then
+        obj = getObjectFromGUID(GUIDNodPrev)
+        if obj ~= nil then
+            obj.call("retira_Ruta_Chain")
+        end
+        self.destruct()
+    else
+        obj = getObjectFromGUID(GUIDNodPrev)
+        if obj ~= nil then
+            obj.setLock(false)
+            obj.interactable = true
+        end
+        self.destruct()
+    end
+end
