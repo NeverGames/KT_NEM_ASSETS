@@ -1,0 +1,1 @@
+# KT_NEM_ASSETS
