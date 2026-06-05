@@ -368,7 +368,7 @@ function agregaRuta()
     }
     DataModel =
     {
-        mesh = "https://steamusercontent-a.akamaihd.net/ugc/17056262814538613288/098746CE20F738905CA068C277D85FE6F93F550D/",
+        mesh = "https://raw.githubusercontent.com/NeverGames/KT_NEM_ASSETS/refs/heads/main/Bases/baseModel"..tostring(state.base.x).."MM.obj",
         diffuse = "https://raw.githubusercontent.com/xSpaghettyx/KT24-Table-The-Killzone-Mod/refs/heads/main/KTMT%20Diffuse.png",
         collider = "https://raw.githubusercontent.com/Ixidior/KTMT/main/collider4.obj",
         type = 0,
