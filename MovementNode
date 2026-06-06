@@ -35,6 +35,11 @@ availableBaseSizes = {
     ["50"] = true,
     ["55"] = true,
     ["35x60"] = true,
+    ["60x35"] = true,
+    ["90"] = true,
+    ["100"] = true,
+    ["105x170"] = true,
+    ["60"] = true,
 }
 fallbackBaseSize = "32"
 
