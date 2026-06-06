@@ -23,6 +23,27 @@ local function isNaN(v)
     return v ~= v
 end
 
+-- Base sizes you have uploaded to the repo as Bases/baseModel<size>MM.obj.
+-- Square bases use a single number ("32"); rectangular bases use "<x>x<z>"
+-- ("35x60" -> baseModel35x60MM.obj). Add sizes here as you upload more.
+-- Anything not listed falls back to fallbackBaseSize.
+availableBaseSizes = {
+    ["25"] = true,
+    ["28.5"] = true,
+    ["32"] = true,
+    ["40"] = true,
+    ["50"] = true,
+    ["55"] = true,
+    ["35x60"] = true,
+}
+fallbackBaseSize = "32"
+
+-- Turn a number into a clean string, dropping any trailing ".0"
+local function baseNumStr(n)
+    local s = tostring(n)
+    return (s:gsub("%.0$", ""))
+end
+
 function onPickUp(cp)
     clickPlayerColor = cp
     --print(clickPlayerColor)
@@ -359,6 +380,44 @@ end
 
 function agregaRuta()
     CUBO = nil
+
+    -- Resolve the base size dynamically at spawn time, the same way the
+    -- original web-request version did. Read both x and z from the model
+    -- (GUIDModel), which always holds the populated state table. Fall back
+    -- through the node's own baseModel, then a hard default, so we never build
+    -- a broken URL like baseModelnilMM.obj or baseModel1MM.obj.
+    local baseX = nil
+    local baseZ = nil
+    local modelObj = getObjectFromGUID(GUIDModel)
+    if modelObj ~= nil then
+        local mstate = modelObj.getTable("state")
+        if mstate ~= nil and mstate.base ~= nil and mstate.base.x ~= nil then
+            baseX = mstate.base.x
+            baseZ = mstate.base.z
+        end
+    end
+    if baseX == nil then baseX = baseModel end            -- node's inherited value
+    if baseX == nil or baseX == 1 then baseX = 32 end      -- last-resort default
+    if baseZ == nil then baseZ = baseX end                 -- assume square if z unknown
+
+    -- Build the size key: single number for square bases, "<x>x<z>" for
+    -- rectangular ones, matching the file naming convention in the repo.
+    local bx = baseNumStr(baseX)
+    local bz = baseNumStr(baseZ)
+    local sizeStr
+    if bx == bz then
+        sizeStr = bx
+    else
+        sizeStr = bx .. "x" .. bz
+    end
+
+    -- If we don't have an OBJ for this exact size, fall back to a size we do
+    -- have so the movement template is always visible rather than invisible.
+    if not availableBaseSizes[sizeStr] then
+        print("KTMT: no base mesh for size " .. sizeStr .. "mm, falling back to " .. fallbackBaseSize .. "mm")
+        sizeStr = fallbackBaseSize
+    end
+
     DataObjeto =
     {
         type = "Custom_Model",
@@ -368,7 +427,7 @@ function agregaRuta()
     }
     DataModel =
     {
-        mesh = "https://raw.githubusercontent.com/NeverGames/KT_NEM_ASSETS/refs/heads/main/Bases/baseModel"..tostring(state.base.x).."MM.obj",
+        mesh = "https://raw.githubusercontent.com/NeverGames/KT_NEM_ASSETS/refs/heads/main/Bases/baseModel" .. sizeStr .. "MM.obj",
         diffuse = "https://raw.githubusercontent.com/xSpaghettyx/KT24-Table-The-Killzone-Mod/refs/heads/main/KTMT%20Diffuse.png",
         collider = "https://raw.githubusercontent.com/Ixidior/KTMT/main/collider4.obj",
         type = 0,
@@ -377,10 +436,8 @@ function agregaRuta()
         specular_sharpness = 7,
         freshnel_strength = 0.4
     }
-    -- Capture this node's own GUID and script BEFORE the spawn callback,
-    -- so the values are stable inside the closure.
+    -- Capture this node's own GUID before the spawn callback so it's stable.
     local prevGUID = self.getGUID()
-    local selfScript = self.getLuaScript()
 
     if CUBO == nil then
         CUBO = spawnObject(DataObjeto)
@@ -394,19 +451,18 @@ function agregaRuta()
         CUBO.static_friction = 1
     end
 
-    -- No web dependency: hand the freshly spawned node a copy of this very
-    -- script, plus the chain GUIDs. We wait for the object to finish spawning
-    -- before assigning, since the model/collider load asynchronously.
-    Wait.condition(
-        function()
-            CUBO.setLuaScript(selfScript)
-            CUBO.setVar("GUIDModel", GUIDModel)
-            CUBO.setVar("GUIDNodPrev", prevGUID)
-        end,
-        function()
-            return CUBO ~= nil and CUBO.loading_custom == false
+    -- Fetch the movement script from your own hosted copy and assign it to the
+    -- freshly spawned node, along with the chain GUIDs.
+    WebRequest.get("https://raw.githubusercontent.com/NeverGames/KT_NEM_ASSETS/refs/heads/main/MovementNode", function(req)
+        if req.is_error then
+            print("KTMT: failed to fetch movement script - " .. tostring(req.error))
+            return
         end
-    )
+        local script = req.text
+        CUBO.setLuaScript(script)
+        CUBO.setVar("GUIDModel", GUIDModel)
+        CUBO.setVar("GUIDNodPrev", prevGUID)
+    end)
 
     self.setLock(true)
     self.interactable = false
